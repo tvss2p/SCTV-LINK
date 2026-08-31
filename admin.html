@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>管理ページ | 社内アプリ リンク集</title>
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <div class="brand-bar"></div>
+    <h1>リンク管理ページ</h1>
+    <p>SCTV LINK HUB - 管理者用</p>
+  </header>
+
+  <!-- ログイン画面（管理ページは毎回パスワード入力必須） -->
+  <section id="login-screen" class="login-card" hidden>
+    <h2>パスワードを入力してください</h2>
+    <p class="lead">管理ページに入るにはパスワードが必要です。<br />（トップページで記憶されていても、ここでは毎回入力が必要です）</p>
+    <form id="login-form" autocomplete="off">
+      <label class="field-label" for="password-input">パスワード</label>
+      <input
+        type="password"
+        inputmode="numeric"
+        id="password-input"
+        class="password-input"
+        placeholder="••••"
+        autocomplete="off"
+        required
+      />
+      <button type="submit" class="btn btn-primary">ログイン</button>
+    </form>
+    <div id="login-error" class="error-message" hidden></div>
+  </section>
+
+  <!-- 編集画面 -->
+  <main id="main-screen" hidden>
+    <div class="note-box">
+      ここでの変更は、いま操作しているこのブラウザに保存されます。<br />
+      保存後はトップページを開くと変更内容が反映されます。
+    </div>
+
+    <div id="link-editor-list"></div>
+
+    <div class="admin-toolbar">
+      <button id="add-link-btn" type="button" class="btn btn-secondary">＋ 新しいリンクを追加</button>
+      <button id="save-btn" type="button" class="btn btn-primary">保存する</button>
+    </div>
+
+    <div id="save-status" class="status-message" hidden></div>
+
+    <footer class="site-footer">
+      <a href="index.html" class="footer-link">トップページに戻る</a>
+    </footer>
+  </main>
+
+</div>
+
+<template id="link-editor-template">
+  <div class="admin-card" data-link-item>
+    <div class="row">
+      <label>名称</label>
+      <input type="text" data-field="name" placeholder="例）〇〇申請フォーム" />
+    </div>
+    <div class="row">
+      <label>リンク先URL</label>
+      <input type="url" data-field="url" placeholder="https://example.com/" />
+    </div>
+    <div class="row">
+      <label>説明</label>
+      <textarea data-field="description" placeholder="このリンクの説明を入力してください"></textarea>
+    </div>
+    <div class="admin-card-actions">
+      <button type="button" class="btn btn-danger" data-remove>このリンクを削除</button>
+    </div>
+  </div>
+</template>
+
+<script src="assets/crypto-util.js"></script>
+<script src="assets/seed-data.js"></script>
+<script src="assets/storage.js"></script>
+<script src="assets/admin.js"></script>
+</body>
+</html>

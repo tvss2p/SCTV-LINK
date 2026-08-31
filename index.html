@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>社内アプリ リンク集</title>
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <div class="brand-bar"></div>
+    <h1>社内アプリ リンク集</h1>
+    <p>SCTV LINK HUB</p>
+  </header>
+
+  <!-- ログイン画面 -->
+  <section id="login-screen" class="login-card" hidden>
+    <h2>パスワードを入力してください</h2>
+    <p class="lead">このページの内容は暗号化されています。<br />パスワードを入力すると表示されます。</p>
+    <form id="login-form" autocomplete="off">
+      <label class="field-label" for="password-input">パスワード</label>
+      <input
+        type="password"
+        inputmode="numeric"
+        id="password-input"
+        class="password-input"
+        placeholder="••••"
+        autocomplete="off"
+        required
+      />
+      <button type="submit" class="btn btn-primary">ログイン</button>
+    </form>
+    <div id="login-error" class="error-message" hidden></div>
+  </section>
+
+  <!-- リンク一覧画面 -->
+  <main id="main-screen" hidden>
+    <ul id="link-list" class="link-list"></ul>
+
+    <footer class="site-footer">
+      <button id="logout-btn" type="button" class="footer-link">この端末のログイン情報を削除する</button>
+      <a href="admin.html" class="footer-link">管理ページへ</a>
+    </footer>
+  </main>
+
+</div>
+
+<script src="assets/crypto-util.js"></script>
+<script src="assets/seed-data.js"></script>
+<script src="assets/storage.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
