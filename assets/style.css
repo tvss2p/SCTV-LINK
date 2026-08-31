@@ -238,6 +238,11 @@ body {
   margin: 0;
 }
 
+.btn-retry {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
 .empty-note {
   text-align: center;
   color: var(--color-navy-soft);

@@ -31,7 +31,7 @@
         autocomplete="off"
         required
       />
-      <button type="submit" class="btn btn-primary">ログイン</button>
+      <button type="submit" id="login-submit-btn" class="btn btn-primary">ログイン</button>
     </form>
     <div id="login-error" class="error-message" hidden></div>
   </section>
@@ -39,13 +39,16 @@
   <!-- 編集画面 -->
   <main id="main-screen" hidden>
     <div class="note-box">
-      ここでの変更は、いま操作しているこのブラウザに保存されます。<br />
-      保存後はトップページを開くと変更内容が反映されます。
+      ここでの変更は Google スプレッドシートに保存され、全員のスマホ・PCに反映されます。<br />
+      スプレッドシートを直接編集しても構いません（このページと同じデータを見ています）。
     </div>
 
-    <div id="link-editor-list"></div>
+    <p id="main-loading" class="empty-note" hidden>読み込み中…</p>
+    <div id="main-error" class="error-message" hidden></div>
 
-    <div class="admin-toolbar">
+    <div id="link-editor-list" hidden></div>
+
+    <div id="admin-toolbar" class="admin-toolbar" hidden>
       <button id="add-link-btn" type="button" class="btn btn-secondary">＋ 新しいリンクを追加</button>
       <button id="save-btn" type="button" class="btn btn-primary">保存する</button>
     </div>
@@ -79,9 +82,8 @@
   </div>
 </template>
 
-<script src="assets/crypto-util.js"></script>
-<script src="assets/seed-data.js"></script>
-<script src="assets/storage.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/sheet-api.js"></script>
 <script src="assets/admin.js"></script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 /**
  * app.js - リンク集トップページのロジック
+ * リンクの中身は Google スプレッドシートから毎回取得する。
  */
 (function () {
   const loginScreen = document.getElementById("login-screen");
@@ -7,8 +8,12 @@
   const loginForm = document.getElementById("login-form");
   const passwordInput = document.getElementById("password-input");
   const loginError = document.getElementById("login-error");
+  const loginSubmitBtn = document.getElementById("login-submit-btn");
   const linkList = document.getElementById("link-list");
   const logoutBtn = document.getElementById("logout-btn");
+  const mainLoading = document.getElementById("main-loading");
+  const mainError = document.getElementById("main-error");
+  const retryBtn = document.getElementById("retry-btn");
 
   function showLogin() {
     loginScreen.hidden = false;
@@ -16,19 +21,48 @@
     setTimeout(() => passwordInput.focus(), 0);
   }
 
-  function showMain() {
+  function showMainLoading() {
     loginScreen.hidden = true;
     mainScreen.hidden = false;
+    mainLoading.hidden = false;
+    mainError.hidden = true;
+    retryBtn.hidden = true;
+    linkList.hidden = true;
   }
 
-  function showError(message) {
+  function showMainError(message) {
+    mainLoading.hidden = true;
+    mainError.hidden = false;
+    mainError.textContent = message;
+    retryBtn.hidden = false;
+    linkList.hidden = true;
+  }
+
+  function showMainList() {
+    mainLoading.hidden = true;
+    mainError.hidden = true;
+    retryBtn.hidden = true;
+    linkList.hidden = false;
+  }
+
+  function showLoginError(message) {
     loginError.textContent = message;
     loginError.hidden = false;
   }
 
-  function clearError() {
+  function clearLoginError() {
     loginError.hidden = true;
     loginError.textContent = "";
+  }
+
+  function errorMessageFor(err) {
+    if (err && err.message === "NOT_CONFIGURED") {
+      return "設定が未完了です。assets/config.js に Google スプレッドシートのAPI URLを設定してください。";
+    }
+    if (err && err.message === "NETWORK_ERROR") {
+      return "通信に失敗しました。ネットワーク状況を確認してもう一度お試しください。";
+    }
+    return "パスワードが違います。";
   }
 
   function renderLinks(links) {
@@ -71,48 +105,71 @@
     });
   }
 
-  async function tryUnlock(password) {
-    const cipherText = SctvStorage.getCurrentCipherText();
-    const data = await SctvCrypto.decryptJSON(password, cipherText);
-    return data;
+  async function loadAndShow(password) {
+    showMainLoading();
+    try {
+      const data = await SctvSheetApi.fetchLinks(password);
+      renderLinks(data.links);
+      showMainList();
+      return true;
+    } catch (err) {
+      if (err && err.message === "UNAUTHORIZED") {
+        // 記憶していたパスワードが無効になっていた場合はログイン画面に戻す
+        SctvStorage.clearAuth();
+        showLogin();
+      } else {
+        showMainError(errorMessageFor(err));
+      }
+      return false;
+    }
   }
 
   async function init() {
     const savedPassword = SctvStorage.getSavedPassword();
     if (savedPassword) {
-      try {
-        const data = await tryUnlock(savedPassword);
-        renderLinks(data.links);
-        showMain();
-        return;
-      } catch (err) {
-        // 保存されていたパスワードでは復号できなかった場合はログイン画面へ
-        SctvStorage.clearAuth();
-      }
+      showMainLoading();
+      await loadAndShow(savedPassword);
+      return;
     }
     showLogin();
   }
 
   loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    clearError();
+    clearLoginError();
     const password = passwordInput.value;
+    loginSubmitBtn.disabled = true;
+    loginSubmitBtn.textContent = "確認中…";
     try {
-      const data = await tryUnlock(password);
+      const data = await SctvSheetApi.fetchLinks(password);
       SctvStorage.savePassword(password);
       renderLinks(data.links);
-      showMain();
+      showMainList();
+      mainScreen.hidden = false;
+      loginScreen.hidden = true;
       passwordInput.value = "";
     } catch (err) {
-      showError("パスワードが違います。");
+      showLoginError(errorMessageFor(err));
       passwordInput.value = "";
       passwordInput.focus();
+    } finally {
+      loginSubmitBtn.disabled = false;
+      loginSubmitBtn.textContent = "ログイン";
     }
   });
 
   logoutBtn.addEventListener("click", () => {
     SctvStorage.clearAuth();
     location.reload();
+  });
+
+  retryBtn.addEventListener("click", () => {
+    const savedPassword = SctvStorage.getSavedPassword();
+    if (savedPassword) {
+      loadAndShow(savedPassword);
+    } else {
+      showLogin();
+    }
   });
 
   init();

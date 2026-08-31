@@ -1,7 +1,7 @@
 /**
  * admin.js - 管理ページのロジック
- * 管理ページは端末に関わらず、毎回パスワード入力を必須にする
- * （トップページのログイン記憶とは連動させない）。
+ * Google スプレッドシートを直接読み書きする。
+ * 管理ページは端末に関わらず、毎回パスワード入力を必須にする。
  */
 (function () {
   const loginScreen = document.getElementById("login-screen");
@@ -9,24 +9,23 @@
   const loginForm = document.getElementById("login-form");
   const passwordInput = document.getElementById("password-input");
   const loginError = document.getElementById("login-error");
+  const loginSubmitBtn = document.getElementById("login-submit-btn");
+  const mainLoading = document.getElementById("main-loading");
+  const mainError = document.getElementById("main-error");
   const editorList = document.getElementById("link-editor-list");
+  const adminToolbar = document.getElementById("admin-toolbar");
   const addLinkBtn = document.getElementById("add-link-btn");
   const saveBtn = document.getElementById("save-btn");
   const saveStatus = document.getElementById("save-status");
   const template = document.getElementById("link-editor-template");
 
-  // ログイン成功時に入力されたパスワード（保存時の再暗号化に使用。localStorageには保存しない）
+  // ログイン成功時に入力されたパスワード（保存リクエストに使用。localStorageには保存しない）
   let sessionPassword = null;
 
   function showLogin() {
     loginScreen.hidden = false;
     mainScreen.hidden = true;
     setTimeout(() => passwordInput.focus(), 0);
-  }
-
-  function showMain() {
-    loginScreen.hidden = true;
-    mainScreen.hidden = false;
   }
 
   function showLoginError(message) {
@@ -39,6 +38,16 @@
     loginError.textContent = "";
   }
 
+  function errorMessageFor(err) {
+    if (err && err.message === "NOT_CONFIGURED") {
+      return "設定が未完了です。assets/config.js に Google スプレッドシートのAPI URLを設定してください。";
+    }
+    if (err && err.message === "NETWORK_ERROR") {
+      return "通信に失敗しました。ネットワーク状況を確認してもう一度お試しください。";
+    }
+    return "パスワードが違います。";
+  }
+
   function showStatus(message, isError) {
     saveStatus.textContent = message;
     saveStatus.hidden = false;
@@ -49,6 +58,7 @@
     const data = link || { name: "", url: "", description: "" };
     const fragment = template.content.cloneNode(true);
     const card = fragment.querySelector("[data-link-item]");
+    card.dataset.id = data.id || "";
     card.querySelector('[data-field="name"]').value = data.name || "";
     card.querySelector('[data-field="url"]').value = data.url || "";
     card.querySelector('[data-field="description"]').value = data.description || "";
@@ -63,6 +73,8 @@
     if (Array.isArray(links) && links.length > 0) {
       links.forEach((link) => addLinkCard(link));
     }
+    editorList.hidden = false;
+    adminToolbar.hidden = false;
   }
 
   function collectLinksFromForm() {
@@ -74,7 +86,7 @@
       const description = card.querySelector('[data-field="description"]').value.trim();
       if (!name && !url && !description) return; // 空カードは無視
       links.push({
-        id: "link-" + Date.now() + "-" + index,
+        id: card.dataset.id || "link-" + Date.now() + "-" + index,
         name,
         url,
         description,
@@ -87,17 +99,25 @@
     e.preventDefault();
     clearLoginError();
     const password = passwordInput.value;
+    loginSubmitBtn.disabled = true;
+    loginSubmitBtn.textContent = "確認中…";
+    mainLoading.hidden = false;
+    mainError.hidden = true;
     try {
-      const cipherText = SctvStorage.getCurrentCipherText();
-      const data = await SctvCrypto.decryptJSON(password, cipherText);
+      const data = await SctvSheetApi.fetchLinks(password);
       sessionPassword = password;
+      loginScreen.hidden = true;
+      mainScreen.hidden = false;
+      mainLoading.hidden = true;
       renderEditor(data.links);
-      showMain();
       passwordInput.value = "";
     } catch (err) {
-      showLoginError("パスワードが違います。");
+      showLoginError(errorMessageFor(err));
       passwordInput.value = "";
       passwordInput.focus();
+    } finally {
+      loginSubmitBtn.disabled = false;
+      loginSubmitBtn.textContent = "ログイン";
     }
   });
 
@@ -116,12 +136,17 @@
       return;
     }
 
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中…";
     try {
-      const cipherText = await SctvCrypto.encryptJSON(sessionPassword, { links });
-      SctvStorage.saveLinksCipherText(cipherText);
-      showStatus("保存しました。トップページに反映されます。", false);
+      const data = await SctvSheetApi.saveLinks(sessionPassword, links);
+      renderEditor(data.links);
+      showStatus("保存しました。全員のスマホ・PCに反映されます。", false);
     } catch (err) {
-      showStatus("保存に失敗しました。もう一度お試しください。", true);
+      showStatus(errorMessageFor(err), true);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "保存する";
     }
   });
 
