@@ -14,6 +14,8 @@
   const mainLoading = document.getElementById("main-loading");
   const mainError = document.getElementById("main-error");
   const retryBtn = document.getElementById("retry-btn");
+  const debugHint = document.getElementById("debug-hint");
+  const loginDebugHint = document.getElementById("login-debug-hint");
 
   function showLogin() {
     loginScreen.hidden = false;
@@ -27,6 +29,7 @@
     mainLoading.hidden = false;
     mainError.hidden = true;
     retryBtn.hidden = true;
+    if (debugHint) debugHint.hidden = true;
     linkList.hidden = true;
   }
 
@@ -35,6 +38,7 @@
     mainError.hidden = false;
     mainError.textContent = message;
     retryBtn.hidden = false;
+    if (debugHint) debugHint.hidden = false;
     linkList.hidden = true;
   }
 
@@ -42,12 +46,14 @@
     mainLoading.hidden = true;
     mainError.hidden = true;
     retryBtn.hidden = true;
+    if (debugHint) debugHint.hidden = true;
     linkList.hidden = false;
   }
 
   function showLoginError(message) {
     loginError.textContent = message;
     loginError.hidden = false;
+    if (loginDebugHint) loginDebugHint.hidden = false;
   }
 
   function clearLoginError() {

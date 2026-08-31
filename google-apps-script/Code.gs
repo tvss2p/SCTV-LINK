@@ -122,10 +122,19 @@ function handleSave_(params) {
 
 /**
  * 結果をレスポンスとして返す。
- * embed=true の場合は、隠しiframeの中から親ウィンドウへ
- * postMessageで結果を送り返す実行可能なHTMLとして返す
- * (CORS/CORBの対象外になる)。
+ * embed=true の場合は、隠しiframeの中から結果をpostMessageで
+ * 送り返す実行可能なHTMLとして返す(CORS/CORBの対象外になる)。
  * それ以外(直接ブラウザで開いた場合など)は通常のJSONとして返す。
+ *
+ * 注意: Apps ScriptのHtmlServiceは、コンテンツを独自の入れ子iframeで
+ * ラップして配信する(サイト側から見ると、iframeの中にさらに
+ * Apps Script自身の内部iframeが入っている状態になる)。そのため
+ * window.parent だけでは呼び出し元の実際のページまで届かないことが
+ * あるので、必ず一番外側のウィンドウまで届く window.top と、
+ * 念のため window.parent の両方に送る。またDevToolsで
+ * "Quirks Mode" の警告が出ることがあるが、これはApps Script側が
+ * 独自に付与するマークアップによるもので実害はない(postMessageの
+ * 実行には影響しない)。
  */
 function respond_(result, embed) {
   if (embed) {
@@ -133,9 +142,15 @@ function respond_(result, embed) {
     // "</" + "script" のように分割して、HTML側の</script>タグとの衝突を防ぐ
     var html =
       "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><" +
-      "script>window.parent && window.parent.postMessage(" +
-      payload +
-      ', "*");</' +
+      "script>" +
+      "var __sctvMsg = " + payload + ";" +
+      "function __sctvSend(){" +
+      "try{ if (window.top) window.top.postMessage(__sctvMsg, \"*\"); }catch(e){}" +
+      "try{ if (window.parent && window.parent !== window.top) window.parent.postMessage(__sctvMsg, \"*\"); }catch(e){}" +
+      "}" +
+      "__sctvSend();" +
+      "setTimeout(__sctvSend, 300);" +
+      "</" +
       "script></body></html>";
     return HtmlService.createHtmlOutput(html);
   }

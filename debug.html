@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>接続診断 | 社内アプリ リンク集</title>
+<link rel="stylesheet" href="assets/style.css" />
+<style>
+  .diag-result {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    background: var(--color-gray-bg);
+  }
+  .diag-result h3 {
+    margin: 0 0 8px;
+    font-size: 0.95rem;
+    color: var(--color-navy);
+  }
+  .diag-status {
+    font-weight: 700;
+    font-size: 0.9rem;
+  }
+  .diag-status.ok { color: #1f7a34; }
+  .diag-status.ng { color: var(--color-error); }
+  .diag-status.pending { color: var(--color-navy-soft); }
+  .diag-detail {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    color: var(--color-navy-soft);
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin-top: 6px;
+  }
+  .verdict {
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 20px;
+    font-size: 0.9rem;
+    line-height: 1.7;
+  }
+  .verdict.ok { background: #eaf6ec; border: 1px solid #b9e2c0; color: #1f5f2e; }
+  .verdict.ng { background: #fff4e9; border: 1px solid #ffd9b0; color: #8a4a10; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <div class="brand-bar"></div>
+    <h1>接続診断</h1>
+    <p>Google スプレッドシート連携の状態を確認します</p>
+  </header>
+
+  <main>
+    <div class="admin-card">
+      <div class="row">
+        <label>パスワード</label>
+        <input type="password" inputmode="numeric" id="password-input" placeholder="2121" />
+      </div>
+      <button id="run-btn" type="button" class="btn btn-primary">診断を実行する</button>
+    </div>
+
+    <div id="results" hidden>
+      <div class="diag-result">
+        <h3>0. 設定されているAPIのURL</h3>
+        <div id="r0" class="diag-status pending">確認中…</div>
+        <div id="d0" class="diag-detail"></div>
+      </div>
+
+      <div class="diag-result">
+        <h3>1. 方式A: fetch() での通信</h3>
+        <div id="r1" class="diag-status pending">確認中…</div>
+        <div id="d1" class="diag-detail"></div>
+      </div>
+
+      <div class="diag-result">
+        <h3>2. 方式B: 隠しiframe + postMessage での通信</h3>
+        <div id="r2" class="diag-status pending">確認中…</div>
+        <div id="d2" class="diag-detail"></div>
+      </div>
+
+      <div id="verdict" class="verdict" hidden></div>
+    </div>
+
+    <footer class="site-footer">
+      <a href="index.html" class="footer-link">トップページに戻る</a>
+    </footer>
+  </main>
+
+</div>
+
+<script src="assets/config.js"></script>
+<script src="assets/sheet-api.js"></script>
+<script>
+(function () {
+  const runBtn = document.getElementById("run-btn");
+  const passwordInput = document.getElementById("password-input");
+  const results = document.getElementById("results");
+  const verdict = document.getElementById("verdict");
+
+  function set(id, statusClass, text, detailId, detail) {
+    const el = document.getElementById(id);
+    el.className = "diag-status " + statusClass;
+    el.textContent = text;
+    if (detailId) document.getElementById(detailId).textContent = detail || "";
+  }
+
+  runBtn.addEventListener("click", async () => {
+    results.hidden = false;
+    verdict.hidden = true;
+    runBtn.disabled = true;
+    runBtn.textContent = "診断中…";
+
+    const password = passwordInput.value || "2121";
+
+    // 0. config
+    let apiUrl = null;
+    try {
+      apiUrl = SctvSheetApi.getApiUrl();
+      set("r0", "ok", "設定あり", "d0", apiUrl);
+    } catch (err) {
+      set("r0", "ng", "未設定", "d0", "assets/config.js の SHEET_API_URL が設定されていません。");
+      runBtn.disabled = false;
+      runBtn.textContent = "診断を実行する";
+      return;
+    }
+
+    const url = apiUrl + "?pw=" + encodeURIComponent(password) + "&t=" + Date.now();
+
+    // 1. fetch
+    let fetchOk = false;
+    let fetchErr = "";
+    try {
+      const body = await SctvSheetApi.viaFetch(url);
+      if (body && body.ok === true) {
+        fetchOk = true;
+        set("r1", "ok", "成功", "d1", "リンク " + (body.links || []).length + " 件を取得できました。");
+      } else {
+        set("r1", "ng", "サーバーが ok:false を返しました", "d1", JSON.stringify(body));
+        fetchErr = "server_said_no";
+      }
+    } catch (err) {
+      fetchErr = err.message;
+      if (err.message === "NOT_JSON") {
+        set("r1", "ng", "失敗（JSONではないものが返ってきた）", "d1",
+          "Googleのログイン画面などが返っている可能性が高いです。");
+      } else {
+        set("r1", "ng", "失敗（CORSなどでブロック）", "d1", err.message);
+      }
+    }
+
+    // 2. iframe
+    let iframeOk = false;
+    let iframeErr = "";
+    try {
+      const body = await SctvSheetApi.viaIframe(url, 15000);
+      if (body && body.ok === true) {
+        iframeOk = true;
+        set("r2", "ok", "成功", "d2", "リンク " + (body.links || []).length + " 件を取得できました。");
+      } else {
+        set("r2", "ng", "サーバーが ok:false を返しました", "d2", JSON.stringify(body));
+        iframeErr = "server_said_no";
+      }
+    } catch (err) {
+      iframeErr = err.message;
+      if (err.message === "IFRAME_TIMEOUT") {
+        set("r2", "ng", "失敗（応答が返ってこない）", "d2",
+          "iframe内でApps Scriptからの返信(postMessage)が届きませんでした。");
+      } else {
+        set("r2", "ng", "失敗", "d2", err.message);
+      }
+    }
+
+    // verdict
+    verdict.hidden = false;
+    if (fetchOk || iframeOk) {
+      verdict.className = "verdict ok";
+      verdict.innerHTML =
+        "<strong>✅ 通信できています。</strong><br>" +
+        "リンク集は正常に動作するはずです。トップページを開いて確認してください。" +
+        (fetchOk && !iframeOk ? "<br>（方式Aのみ成功。実利用に問題はありません）" : "") +
+        (!fetchOk && iframeOk ? "<br>（方式Bのみ成功。実利用に問題はありません）" : "");
+    } else if (fetchErr === "server_said_no" || iframeErr === "server_said_no") {
+      verdict.className = "verdict ng";
+      verdict.innerHTML =
+        "<strong>⚠️ サーバーには届いていますが、拒否されました。</strong><br>" +
+        "入力したパスワードが、Apps Script側のパスワード（スクリプトプロパティ SITE_PASSWORD、既定値は 2121）と一致していない可能性があります。";
+    } else {
+      verdict.className = "verdict ng";
+      verdict.innerHTML =
+        "<strong>❌ どちらの方式でも通信できませんでした。</strong><br><br>" +
+        "最も可能性が高い原因は、<strong>Apps Scriptのデプロイ設定「アクセスできるユーザー」が『全員』になっていない</strong>ことです。" +
+        "「Googleアカウントを持つ全員」だと、ブラウザからの呼び出しがログイン画面に飛ばされて失敗します" +
+        "（自分でURLを直接開くとログイン済みなので成功して見えます）。<br><br>" +
+        "<strong>確認方法：</strong>Chromeのシークレットウィンドウ（Googleにログインしていない状態）で、上に表示されているAPIのURLの末尾に <code>?pw=2121</code> を付けて開いてください。" +
+        "ログイン画面が出たら、この設定が原因です。<br><br>" +
+        "<strong>直し方：</strong>Apps Scriptエディタ →「デプロイ」→「デプロイを管理」→ 鉛筆アイコン →" +
+        "「アクセスできるユーザー」を <strong>全員</strong> に変更 → バージョンを「新バージョン」にして「デプロイ」。";
+    }
+
+    runBtn.disabled = false;
+    runBtn.textContent = "もう一度診断する";
+  });
+})();
+</script>
+</body>
+</html>

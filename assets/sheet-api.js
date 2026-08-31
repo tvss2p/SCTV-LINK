@@ -2,15 +2,24 @@
  * sheet-api.js
  * Google Apps Script（Google スプレッドシート連携）とやり取りする共通処理。
  *
- * fetch() は Apps Script 特有の CORS 制約で読み取れないことがあり、
- * その代替として試した JSONP(<script>タグ)方式も、Chromeの CORB
- * (Cross-Origin Read Blocking) によりブロックされることが判明した
- * (Apps ScriptがJavaScriptとして正しいContent-Typeを返さないため)。
+ * Apps Script のウェブアプリはブラウザから呼び出す際に複数の落とし穴があるため、
+ * 2つの通信方式を順に試す（片方が塞がれても、もう片方で通る）。
  *
- * そのため、隠しiframeで実際にApps ScriptのURLへページ遷移させ、
- * その中から postMessage で結果を送り返してもらう方式を採用する。
- * これは通常のページ遷移+ウィンドウ間メッセージングであり、
- * CORS/CORBのどちらの制約も受けない。
+ *   方式1: fetch()
+ *     デプロイが「全員(匿名可)」で公開されていれば、これが最もシンプルで確実。
+ *     ただしCORS制約で弾かれることがある。
+ *
+ *   方式2: 隠しiframe + postMessage
+ *     CORS/CORBの影響を受けない。ただしApps ScriptのHtmlServiceは
+ *     コンテンツを独自の入れ子iframeでラップして配信するため、
+ *     Apps Script側は window.parent ではなく window.top へ送る必要がある
+ *     （Code.gs 側で対応済み）。
+ *
+ * 【重要】どちらの方式も、Apps Scriptのデプロイ設定が
+ * 「アクセスできるユーザー: 全員」になっている必要がある。
+ * 「Googleアカウントを持つ全員」だとログインが要求され、
+ * ブラウザからの呼び出しはログイン画面にリダイレクトされて失敗する
+ * （ブラウザで直接URLを開くと自分はログイン済みなので成功して見える）。
  */
 (function (global) {
   function getApiUrl() {
@@ -34,11 +43,31 @@
   }
 
   /**
-   * 隠しiframeでURLへ遷移させ、postMessageで結果を受け取る。
-   * Apps Script側は { source: "sctv-link-hub", result: {...} } を
-   * window.parent.postMessage() で送ってくる想定。
+   * 方式1: fetch() で取得する。
    */
-  function embedRequest(url, timeoutMs) {
+  async function viaFetch(url) {
+    let res;
+    try {
+      res = await fetch(url, { method: "GET" });
+    } catch (err) {
+      throw new Error("FETCH_BLOCKED"); // CORSなどでブロックされた
+    }
+    if (!res.ok) throw new Error("FETCH_BLOCKED");
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      // JSONでない = ログイン画面などが返ってきている
+      throw new Error("NOT_JSON");
+    }
+  }
+
+  /**
+   * 方式2: 隠しiframeでURLへ遷移させ、postMessageで結果を受け取る。
+   * Apps Script側は { source: "sctv-link-hub", result: {...} } を
+   * window.top / window.parent へ postMessage してくる想定。
+   */
+  function viaIframe(url, timeoutMs) {
     return new Promise((resolve, reject) => {
       let settled = false;
       let timer;
@@ -69,17 +98,39 @@
       window.addEventListener("message", onMessage);
 
       iframe.onerror = function () {
-        finish(new Error("NETWORK_ERROR"));
+        finish(new Error("IFRAME_FAILED"));
       };
 
       timer = setTimeout(function () {
-        finish(new Error("NETWORK_ERROR"));
+        finish(new Error("IFRAME_TIMEOUT"));
       }, timeoutMs || 15000);
 
       const sep = url.indexOf("?") === -1 ? "?" : "&";
       iframe.src = url + sep + "embed=1";
       document.body.appendChild(iframe);
     });
+  }
+
+  /**
+   * 方式1 → 方式2 の順に試す。
+   * 両方失敗した場合は Error("NETWORK_ERROR") を throw。
+   * 詳細な失敗理由は err.details に配列で入れる（debug.html用）。
+   */
+  async function request(url, timeoutMs) {
+    const details = [];
+    try {
+      return await viaFetch(url);
+    } catch (err) {
+      details.push("fetch: " + err.message);
+    }
+    try {
+      return await viaIframe(url, timeoutMs);
+    } catch (err) {
+      details.push("iframe: " + err.message);
+    }
+    const error = new Error("NETWORK_ERROR");
+    error.details = details;
+    throw error;
   }
 
   /**
@@ -92,7 +143,7 @@
   async function fetchLinks(password) {
     const apiUrl = getApiUrl(); // ここで NOT_CONFIGURED の可能性あり
     const url = apiUrl + "?pw=" + encodeURIComponent(password) + "&t=" + Date.now();
-    const body = await embedRequest(url);
+    const body = await request(url);
     if (!body || body.ok !== true) throw new Error("UNAUTHORIZED");
     return { links: Array.isArray(body.links) ? body.links : [] };
   }
@@ -109,10 +160,10 @@
       "&action=save" +
       "&data=" + encodeURIComponent(payload) +
       "&t=" + Date.now();
-    const body = await embedRequest(url, 20000);
+    const body = await request(url, 20000);
     if (!body || body.ok !== true) throw new Error("UNAUTHORIZED");
     return { links: Array.isArray(body.links) ? body.links : [] };
   }
 
-  global.SctvSheetApi = { fetchLinks, saveLinks };
+  global.SctvSheetApi = { fetchLinks, saveLinks, viaFetch, viaIframe, getApiUrl };
 })(window);
