@@ -25,14 +25,18 @@ google-apps-script/Code.gs  スプレッドシート側に貼り付ける Apps S
         ▼
 [Apps Script Web App] --- パスワードが正しい時だけ JSON を返す/更新する ---
         │
-        │ JSONP (<script>タグ経由。fetch()だとCORSで弾かれるため)
+        │ 隠しiframe + postMessage
+        │ (fetch()はCORSで、JSONPはChromeのCORBで、それぞれ弾かれるため)
         ▼
 [index.html / admin.html]  ← みんなのスマホ・PC (GitHub Pages で公開)
 ```
 
 - リンクの中身（URL・名称・説明）はサイトのファイルには一切含まれていません。ページを開くたびに、入力されたパスワードを添えて Apps Script にリクエストし、正しい場合だけスプレッドシートの中身を取得して表示します。
 - そのため、**ログイン前に開発者ツールでソースを見ても中身は一切表示されません**（データそのものがまだサーバー側にあり、届いていないため）。
-- 通信方式には `fetch()` ではなく **JSONP**（`<script>`タグでデータを読み込む方式）を使っています。Google Apps Script のウェブアプリは `fetch()`（CORS）からだと正常に読み取れないことがあるための対策です。
+- 通信方式には `fetch()` や JSONP ではなく、**隠しiframeを使った実際のページ遷移 + `postMessage`** を使っています。
+  - `fetch()` は Google Apps Script のウェブアプリ特有の CORS 制約で読み取れないことがあります。
+  - その代替としてよく使われる JSONP（`<script>`タグでの読み込み）も、Apps Script が正しい JavaScript の Content-Type を返さないため、Chrome の CORB（Cross-Origin Read Blocking）にブロックされることが確認されています（Edgeでは発生しない場合がある一方、Chromeでは発生しやすいという実例あり）。
+  - 隠しiframeでの実際のページ遷移は、CORSにもCORBにも影響されないため、確実に動作します。
 - 管理ページで保存すると Apps Script 経由でスプレッドシートが書き換わり、以降 誰かがトップページを開くたびに最新の内容が取得されます＝**全員のスマホに反映**されます。
 - 管理者は、管理ページを使わずに **Google スプレッドシートを直接編集**しても構いません（同じデータを見ているため、次にトップページ/管理ページを開いたときに反映されます）。
 

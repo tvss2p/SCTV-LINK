@@ -5,10 +5,18 @@
  * 紐づく Apps Script プロジェクトとして貼り付け、「ウェブアプリ」として
  * デプロイして使用します（README.md 参照）。
  *
- * サイト側は fetch() ではなく JSONP（<script>タグ）でこのAPIを呼び出す。
- * (fetch()だとApps Script特有のCORS制約で読み取れないことがあるため)
+ * サイト側は fetch() や JSONP(<script>タグ) ではなく、
+ * 「隠しiframeで実際にこのURLへ遷移させ、postMessageで結果を送り返す」
+ * 方式でこのAPIを呼び出す(?embed=1 を付けて呼ばれる)。
+ * fetch()はApps Script特有のCORS制約で、JSONPはChromeのCORB
+ * (Cross-Origin Read Blocking / Apps ScriptがJavaScriptとして
+ * 正しいContent-Typeを返さないため)でそれぞれ読み取れないことが
+ * あるが、iframeへの実際のページ遷移+postMessageはCORS/CORBの
+ * 対象外のため確実に動作する。
  * 読み取り・保存とも doGet だけで処理する
  * （保存は ?action=save&data=<base64のJSON> というGETリクエストとして送られてくる）。
+ * ?embed=1 を付けずに直接ブラウザで開いた場合は、動作確認用に
+ * 通常のJSONをそのまま返す。
  *
  * シートの1行目はヘッダー行 (id, name, url, description) とし、
  * 2行目以降にリンクを1件ずつ入力してください。
@@ -114,13 +122,22 @@ function handleSave_(params) {
 
 /**
  * 結果をレスポンスとして返す。
- * callback が指定されている場合(JSONP)は `callback(JSON文字列);` という
- * 実行可能なJavaScriptとして返し、指定がなければ通常のJSONとして返す。
+ * embed=true の場合は、隠しiframeの中から親ウィンドウへ
+ * postMessageで結果を送り返す実行可能なHTMLとして返す
+ * (CORS/CORBの対象外になる)。
+ * それ以外(直接ブラウザで開いた場合など)は通常のJSONとして返す。
  */
-function respond_(result, callback) {
-  if (callback) {
-    var js = callback + "(" + JSON.stringify(result) + ");";
-    return ContentService.createTextOutput(js).setMimeType(ContentService.MimeType.JAVASCRIPT);
+function respond_(result, embed) {
+  if (embed) {
+    var payload = JSON.stringify({ source: "sctv-link-hub", result: result });
+    // "</" + "script" のように分割して、HTML側の</script>タグとの衝突を防ぐ
+    var html =
+      "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><" +
+      "script>window.parent && window.parent.postMessage(" +
+      payload +
+      ', "*");</' +
+      "script></body></html>";
+    return HtmlService.createHtmlOutput(html);
   }
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(
     ContentService.MimeType.JSON
@@ -130,12 +147,12 @@ function respond_(result, callback) {
 /**
  * GET /exec?pw=xxxx                              → 現在のリンク一覧を取得
  * GET /exec?pw=xxxx&action=save&data=<base64>     → リンク一覧を保存(丸ごと置き換え)
- * どちらも &callback=xxx を付けるとJSONPとして応答する。
+ * どちらも &embed=1 を付けるとiframe+postMessage用のHTMLとして応答する。
  */
 function doGet(e) {
   var params = (e && e.parameter) || {};
   var pw = params.pw || "";
-  var callback = params.callback;
+  var embed = params.embed === "1";
   var result;
 
   if (pw !== getPassword_()) {
@@ -146,12 +163,12 @@ function doGet(e) {
     result = handleRead_();
   }
 
-  return respond_(result, callback);
+  return respond_(result, embed);
 }
 
 /**
  * POST /exec  body: { "pw": "xxxx", "links": [ {id,name,url,description}, ... ] }
- * サイト側は現在このエンドポイントを使用していない(JSONPのGETのみ使用)が、
+ * サイト側は現在このエンドポイントを使用していない(GET+iframeのみ使用)が、
  * CORSの問題が発生しない環境など、他クライアントからの利用のために残してある。
  */
 function doPost(e) {

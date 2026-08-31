@@ -2,9 +2,15 @@
  * sheet-api.js
  * Google Apps Script（Google スプレッドシート連携）とやり取りする共通処理。
  *
- * fetch() で直接呼び出すと、Apps Script の仕様上ブラウザのCORS制約に
- * かかり読み取れない場合があるため、CORSの影響を受けない
- * JSONP方式（<script>タグでの読み込み）で通信する。
+ * fetch() は Apps Script 特有の CORS 制約で読み取れないことがあり、
+ * その代替として試した JSONP(<script>タグ)方式も、Chromeの CORB
+ * (Cross-Origin Read Blocking) によりブロックされることが判明した
+ * (Apps ScriptがJavaScriptとして正しいContent-Typeを返さないため)。
+ *
+ * そのため、隠しiframeで実際にApps ScriptのURLへページ遷移させ、
+ * その中から postMessage で結果を送り返してもらう方式を採用する。
+ * これは通常のページ遷移+ウィンドウ間メッセージングであり、
+ * CORS/CORBのどちらの制約も受けない。
  */
 (function (global) {
   function getApiUrl() {
@@ -28,48 +34,51 @@
   }
 
   /**
-   * JSONP方式でリクエストを送る。
-   * <script src="url&callback=xxx"> を挿入し、Apps Script側が
-   * xxx(...) を呼び出す形でレスポンスを受け取る。CORSの影響を受けない。
+   * 隠しiframeでURLへ遷移させ、postMessageで結果を受け取る。
+   * Apps Script側は { source: "sctv-link-hub", result: {...} } を
+   * window.parent.postMessage() で送ってくる想定。
    */
-  function jsonp(url, timeoutMs) {
+  function embedRequest(url, timeoutMs) {
     return new Promise((resolve, reject) => {
-      const callbackName =
-        "sctvJsonp_" + Date.now() + "_" + Math.floor(Math.random() * 1e9);
-      const script = document.createElement("script");
       let settled = false;
       let timer;
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.setAttribute("aria-hidden", "true");
 
       function cleanup() {
-        delete window[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
+        window.removeEventListener("message", onMessage);
         clearTimeout(timer);
+        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
       }
 
-      window[callbackName] = function (data) {
+      function finish(err, data) {
         if (settled) return;
         settled = true;
         cleanup();
-        resolve(data);
+        if (err) reject(err);
+        else resolve(data);
+      }
+
+      function onMessage(event) {
+        const data = event.data;
+        if (!data || data.source !== "sctv-link-hub") return; // 無関係なメッセージは無視
+        finish(null, data.result);
+      }
+
+      window.addEventListener("message", onMessage);
+
+      iframe.onerror = function () {
+        finish(new Error("NETWORK_ERROR"));
       };
 
-      script.onerror = function () {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error("NETWORK_ERROR"));
-      };
-
-      timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error("NETWORK_ERROR"));
+      timer = setTimeout(function () {
+        finish(new Error("NETWORK_ERROR"));
       }, timeoutMs || 15000);
 
       const sep = url.indexOf("?") === -1 ? "?" : "&";
-      script.src = url + sep + "callback=" + encodeURIComponent(callbackName);
-      document.head.appendChild(script);
+      iframe.src = url + sep + "embed=1";
+      document.body.appendChild(iframe);
     });
   }
 
@@ -83,7 +92,7 @@
   async function fetchLinks(password) {
     const apiUrl = getApiUrl(); // ここで NOT_CONFIGURED の可能性あり
     const url = apiUrl + "?pw=" + encodeURIComponent(password) + "&t=" + Date.now();
-    const body = await jsonp(url);
+    const body = await embedRequest(url);
     if (!body || body.ok !== true) throw new Error("UNAUTHORIZED");
     return { links: Array.isArray(body.links) ? body.links : [] };
   }
@@ -100,7 +109,7 @@
       "&action=save" +
       "&data=" + encodeURIComponent(payload) +
       "&t=" + Date.now();
-    const body = await jsonp(url, 20000);
+    const body = await embedRequest(url, 20000);
     if (!body || body.ok !== true) throw new Error("UNAUTHORIZED");
     return { links: Array.isArray(body.links) ? body.links : [] };
   }
