@@ -39,6 +39,13 @@ var SHEET_NAME = "links"; // シート(タブ)名。実際のタブ名に合わ�
 var PASSWORD_PROPERTY_KEY = "SITE_PASSWORD";
 var DEFAULT_PASSWORD = "2121";
 
+// リンク一覧のキャッシュ設定。
+// SpreadsheetApp でシートを読むのは1回あたり0.5〜1.5秒かかるため、
+// 読み取り結果をスクリプトキャッシュに置き、2回目以降はそこから即座に返す。
+// キャッシュは「管理ページからの保存時」と「シートを直接編集したとき(onEdit)」に更新される。
+var CACHE_KEY = "links_json_v1";
+var CACHE_TTL_SECONDS = 300; // 5分（万一キャッシュ更新を取りこぼしても、この時間で必ず読み直す）
+
 function getPassword_() {
   var pw = PropertiesService.getScriptProperties().getProperty(PASSWORD_PROPERTY_KEY);
   return pw || DEFAULT_PASSWORD;
@@ -67,6 +74,66 @@ function readLinks_() {
   return links;
 }
 
+function getCache_() {
+  try {
+    return CacheService.getScriptCache();
+  } catch (err) {
+    return null; // キャッシュが使えない環境でも、シート直読みで動作は継続する
+  }
+}
+
+function putCachedLinks_(links) {
+  var cache = getCache_();
+  if (!cache) return;
+  try {
+    cache.put(CACHE_KEY, JSON.stringify(links), CACHE_TTL_SECONDS);
+  } catch (err) {
+    /* 100KB超などで保存できない場合は、単にキャッシュ無しで動く */
+  }
+}
+
+function clearCachedLinks_() {
+  var cache = getCache_();
+  if (!cache) return;
+  try {
+    cache.remove(CACHE_KEY);
+  } catch (err) {
+    /* no-op */
+  }
+}
+
+/**
+ * リンク一覧を返す。キャッシュがあればシートを読まずにそれを返す。
+ * skipCache が true の場合は必ずシートを読み直す（管理ページからの読み込み用）。
+ */
+function readLinksCached_(skipCache) {
+  if (!skipCache) {
+    var cache = getCache_();
+    if (cache) {
+      var hit = cache.get(CACHE_KEY);
+      if (hit) {
+        try {
+          var links = JSON.parse(hit);
+          if (Array.isArray(links)) return links;
+        } catch (err) {
+          /* 壊れていたら読み直す */
+        }
+      }
+    }
+  }
+  var fresh = readLinks_();
+  putCachedLinks_(fresh);
+  return fresh;
+}
+
+/**
+ * スプレッドシートを直接編集したときにキャッシュを捨てる（簡易トリガー）。
+ * これにより、シートを手で書き換えた内容もすぐにサイトへ反映される。
+ */
+function onEdit(e) {
+  clearCachedLinks_();
+}
+
 function writeLinks_(links) {
   var sheet = getSheet_();
   var lastRow = sheet.getLastRow();
@@ -92,9 +159,9 @@ function base64ToUtf8_(base64) {
   return Utilities.newBlob(bytes).getDataAsString("UTF-8");
 }
 
-function handleRead_() {
+function handleRead_(skipCache) {
   try {
-    return { ok: true, links: readLinks_() };
+    return { ok: true, links: readLinksCached_(skipCache) };
   } catch (err) {
     return { ok: false, error: "server_error", message: String(err) };
   }
@@ -114,8 +181,11 @@ function handleSave_(params) {
   }
   try {
     writeLinks_(links);
-    return { ok: true, links: readLinks_() };
+    var saved = readLinks_();
+    putCachedLinks_(saved); // 保存直後にキャッシュを最新化する
+    return { ok: true, links: saved };
   } catch (err) {
+    clearCachedLinks_();
     return { ok: false, error: "server_error", message: String(err) };
   }
 }
@@ -160,7 +230,8 @@ function respond_(result, embed) {
 }
 
 /**
- * GET /exec?pw=xxxx                              → 現在のリンク一覧を取得
+ * GET /exec?pw=xxxx                              → 現在のリンク一覧を取得(サーバー側キャッシュあり)
+ * GET /exec?pw=xxxx&fresh=1                       → キャッシュを無視してシートから取得
  * GET /exec?pw=xxxx&action=save&data=<base64>     → リンク一覧を保存(丸ごと置き換え)
  * どちらも &embed=1 を付けるとiframe+postMessage用のHTMLとして応答する。
  */
@@ -175,7 +246,7 @@ function doGet(e) {
   } else if (params.action === "save") {
     result = handleSave_(params);
   } else {
-    result = handleRead_();
+    result = handleRead_(params.fresh === "1");
   }
 
   return respond_(result, embed);
@@ -201,7 +272,9 @@ function doPost(e) {
   }
   try {
     writeLinks_(body.links);
-    return respond_({ ok: true, links: readLinks_() });
+    var savedLinks = readLinks_();
+    putCachedLinks_(savedLinks);
+    return respond_({ ok: true, links: savedLinks });
   } catch (err) {
     return respond_({ ok: false, error: "server_error", message: String(err) });
   }

@@ -3,7 +3,7 @@
  * Google Apps Script（Google スプレッドシート連携）とやり取りする共通処理。
  *
  * Apps Script のウェブアプリはブラウザから呼び出す際に複数の落とし穴があるため、
- * 2つの通信方式を順に試す（片方が塞がれても、もう片方で通る）。
+ * 2つの通信方式を用意している（片方が塞がれても、もう片方で通る）。
  *
  *   方式1: fetch()
  *     デプロイが「全員(匿名可)」で公開されていれば、これが最もシンプルで確実。
@@ -15,6 +15,14 @@
  *     Apps Script側は window.parent ではなく window.top へ送る必要がある
  *     （Code.gs 側で対応済み）。
  *
+ * 【速度について】
+ * 以前は「方式1が失敗してから方式2」という直列だったため、
+ * fetch()がCORSで弾かれる環境では毎回2回分の往復時間がかかっていた。
+ * 現在は読み取り時のみ、先に試す方式に HEAD_START_MS の猶予を与えた上で
+ * もう一方も並行して開始し、先に成功した方を採用する。
+ * さらに成功した方式を localStorage に覚えておき、次回はそちらを先に試す。
+ * （保存(save)はサーバー側で二重に書き込まれないよう、従来どおり直列のまま）
+ *
  * 【重要】どちらの方式も、Apps Scriptのデプロイ設定が
  * 「アクセスできるユーザー: 全員」になっている必要がある。
  * 「Googleアカウントを持つ全員」だとログインが要求され、
@@ -22,12 +30,36 @@
  * （ブラウザで直接URLを開くと自分はログイン済みなので成功して見える）。
  */
 (function (global) {
+  const TRANSPORT_KEY = "sctvlink_transport_v1"; // 前回成功した通信方式
+  // 先に試す方式にこれだけ猶予を与えてから、もう一方も並行で開始する。
+  // 前回成功した方式が分かっている場合は長めに待ち、サーバーの二重実行を避ける
+  // （猶予内に失敗すれば、待たずに即もう一方へ切り替わる）。
+  const HEAD_START_KNOWN_MS = 2500;
+  const HEAD_START_UNKNOWN_MS = 700;
+  const IFRAME_TIMEOUT_MS = 12000;
+
   function getApiUrl() {
     const url = window.SCTV_CONFIG && window.SCTV_CONFIG.SHEET_API_URL;
     if (!url || url.indexOf("ここにデプロイID") !== -1) {
       throw new Error("NOT_CONFIGURED");
     }
     return url;
+  }
+
+  function getPreferredTransport() {
+    try {
+      return localStorage.getItem(TRANSPORT_KEY);
+    } catch (err) {
+      return null; // プライベートブラウズ等でlocalStorageが使えない場合
+    }
+  }
+
+  function rememberTransport(name) {
+    try {
+      localStorage.setItem(TRANSPORT_KEY, name);
+    } catch (err) {
+      /* 覚えられなくても動作に支障はない */
+    }
   }
 
   /**
@@ -103,47 +135,115 @@
 
       timer = setTimeout(function () {
         finish(new Error("IFRAME_TIMEOUT"));
-      }, timeoutMs || 15000);
+      }, timeoutMs || IFRAME_TIMEOUT_MS);
 
       const sep = url.indexOf("?") === -1 ? "?" : "&";
       iframe.src = url + sep + "embed=1";
-      document.body.appendChild(iframe);
+      // <head>内から先行呼び出しされる場合はまだ body が無いため documentElement を使う
+      (document.body || document.documentElement).appendChild(iframe);
     });
   }
 
+  function networkError(details) {
+    const error = new Error("NETWORK_ERROR");
+    error.details = details;
+    return error;
+  }
+
   /**
-   * 方式1 → 方式2 の順に試す。
-   * 両方失敗した場合は Error("NETWORK_ERROR") を throw。
-   * 詳細な失敗理由は err.details に配列で入れる（debug.html用）。
+   * 方式1 → 方式2 の順に「直列で」試す（保存用）。
+   * 同じリクエストが二重にサーバーへ届かないことを優先する。
    */
-  async function request(url, timeoutMs) {
+  async function requestSerial(url, timeoutMs) {
     const details = [];
     try {
-      return await viaFetch(url);
+      const data = await viaFetch(url);
+      rememberTransport("fetch");
+      return data;
     } catch (err) {
       details.push("fetch: " + err.message);
     }
     try {
-      return await viaIframe(url, timeoutMs);
+      const data = await viaIframe(url, timeoutMs);
+      rememberTransport("iframe");
+      return data;
     } catch (err) {
       details.push("iframe: " + err.message);
     }
-    const error = new Error("NETWORK_ERROR");
-    error.details = details;
-    throw error;
+    throw networkError(details);
+  }
+
+  /**
+   * 2つの方式を（時間差をつけて）並行して試し、先に成功した方を採用する（読み取り用）。
+   * 前回成功した方式を先に、もう一方は HEAD_START_MS 後に開始する。
+   * 先に始めた方が猶予時間内に失敗した場合は、待たずにもう一方を開始する。
+   */
+  function requestParallel(url, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const details = [];
+      const failed = {};
+      let settled = false;
+      let secondStarted = false;
+      let delayTimer;
+
+      const preferred = getPreferredTransport();
+      const first = preferred === "iframe" ? "iframe" : "fetch";
+      const second = first === "fetch" ? "iframe" : "fetch";
+      const headStartMs = preferred ? HEAD_START_KNOWN_MS : HEAD_START_UNKNOWN_MS;
+
+      function run(name) {
+        const attempt =
+          name === "fetch" ? viaFetch(url) : viaIframe(url, timeoutMs);
+        attempt.then(
+          function (data) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(delayTimer);
+            rememberTransport(name);
+            resolve(data);
+          },
+          function (err) {
+            details.push(name + ": " + err.message);
+            failed[name] = true;
+            if (settled) return;
+            if (!secondStarted) {
+              startSecond(); // 猶予を待たずに、もう一方へ即座に切り替える
+              return;
+            }
+            if (failed[first] && failed[second]) reject(networkError(details));
+          }
+        );
+      }
+
+      function startSecond() {
+        if (secondStarted || settled) return;
+        secondStarted = true;
+        clearTimeout(delayTimer);
+        run(second);
+      }
+
+      run(first);
+      delayTimer = setTimeout(startSecond, headStartMs);
+    });
   }
 
   /**
    * パスワードを添えてリンク一覧を取得する。
    * 戻り値: { links: [...] }
+   * options.fresh を true にすると、サーバー側のキャッシュを無視して
+   * スプレッドシートを読み直す（管理ページ用）。
    * パスワードが違う場合は Error("UNAUTHORIZED") を throw。
    * 通信に失敗した場合は Error("NETWORK_ERROR") を throw。
    * 未設定(config.js未編集)の場合は Error("NOT_CONFIGURED") を throw。
    */
-  async function fetchLinks(password) {
+  async function fetchLinks(password, options) {
     const apiUrl = getApiUrl(); // ここで NOT_CONFIGURED の可能性あり
-    const url = apiUrl + "?pw=" + encodeURIComponent(password) + "&t=" + Date.now();
-    const body = await request(url);
+    const url =
+      apiUrl +
+      "?pw=" + encodeURIComponent(password) +
+      (options && options.fresh ? "&fresh=1" : "") +
+      "&t=" + Date.now();
+    const body = await requestParallel(url);
     if (!body || body.ok !== true) throw new Error("UNAUTHORIZED");
     return { links: Array.isArray(body.links) ? body.links : [] };
   }
@@ -160,7 +260,7 @@
       "&action=save" +
       "&data=" + encodeURIComponent(payload) +
       "&t=" + Date.now();
-    const body = await request(url, 20000);
+    const body = await requestSerial(url, 20000);
     if (!body || body.ok !== true) throw new Error("UNAUTHORIZED");
     return { links: Array.isArray(body.links) ? body.links : [] };
   }

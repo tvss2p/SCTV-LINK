@@ -104,7 +104,8 @@
     mainLoading.hidden = false;
     mainError.hidden = true;
     try {
-      const data = await SctvSheetApi.fetchLinks(password);
+      // 管理ページは編集用なので、サーバー側キャッシュを無視して最新を読み込む
+      const data = await SctvSheetApi.fetchLinks(password, { fresh: true });
       sessionPassword = password;
       loginScreen.hidden = true;
       mainScreen.hidden = false;
