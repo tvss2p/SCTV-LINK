@@ -26,6 +26,26 @@
   // 現在画面に描画されているリンク一覧（内容が同じときの再描画を避けるため）
   let renderedSignature = null;
 
+  // Apps Scriptはしばらく使われないとスリープし、次の1回目だけ起動に10秒前後かかる。
+  // 何も反応が無いと「固まった」と受け取られてしまうため、
+  // 一定時間を過ぎたら待ち時間の理由を画面に出す。
+  const SLOW_NOTICE_MS = 4000;
+  const LOADING_TEXT = "読み込み中…";
+  const SLOW_LOADING_TEXT = "サーバーの起動を待っています（初回は10秒ほどかかることがあります）";
+  let slowNoticeTimer = null;
+
+  function startSlowNotice(setText) {
+    clearSlowNotice();
+    slowNoticeTimer = setTimeout(() => setText(), SLOW_NOTICE_MS);
+  }
+
+  function clearSlowNotice() {
+    if (slowNoticeTimer) {
+      clearTimeout(slowNoticeTimer);
+      slowNoticeTimer = null;
+    }
+  }
+
   function showLogin() {
     loginScreen.hidden = false;
     mainScreen.hidden = true;
@@ -36,6 +56,10 @@
     loginScreen.hidden = true;
     mainScreen.hidden = false;
     mainLoading.hidden = false;
+    mainLoading.textContent = LOADING_TEXT;
+    startSlowNotice(() => {
+      mainLoading.textContent = SLOW_LOADING_TEXT;
+    });
     mainError.hidden = true;
     if (staleNote) staleNote.hidden = true;
     retryBtn.hidden = true;
@@ -44,6 +68,7 @@
   }
 
   function showMainError(message) {
+    clearSlowNotice();
     mainLoading.hidden = true;
     mainError.hidden = false;
     mainError.textContent = message;
@@ -53,6 +78,7 @@
   }
 
   function showMainList() {
+    clearSlowNotice();
     loginScreen.hidden = true;
     mainScreen.hidden = false;
     mainLoading.hidden = true;
@@ -215,6 +241,9 @@
     const password = passwordInput.value;
     loginSubmitBtn.disabled = true;
     loginSubmitBtn.textContent = "確認中…";
+    startSlowNotice(() => {
+      loginSubmitBtn.textContent = "サーバー起動待ち…";
+    });
     try {
       const data = await SctvSheetApi.fetchLinks(password);
       SctvStorage.savePassword(password);
@@ -227,6 +256,7 @@
       passwordInput.value = "";
       passwordInput.focus();
     } finally {
+      clearSlowNotice();
       loginSubmitBtn.disabled = false;
       loginSubmitBtn.textContent = "ログイン";
     }

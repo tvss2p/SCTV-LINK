@@ -36,7 +36,9 @@
   // （猶予内に失敗すれば、待たずに即もう一方へ切り替わる）。
   const HEAD_START_KNOWN_MS = 2500;
   const HEAD_START_UNKNOWN_MS = 700;
-  const IFRAME_TIMEOUT_MS = 12000;
+  // Apps Scriptは一定時間使われないとスリープし、次の1回目だけ起動に10秒前後かかる
+  // （実測9〜11秒）。タイムアウトはそれを確実に上回る値にしておく。
+  const IFRAME_TIMEOUT_MS = 20000;
 
   function getApiUrl() {
     const url = window.SCTV_CONFIG && window.SCTV_CONFIG.SHEET_API_URL;
@@ -260,7 +262,7 @@
       "&action=save" +
       "&data=" + encodeURIComponent(payload) +
       "&t=" + Date.now();
-    const body = await requestSerial(url, 20000);
+    const body = await requestSerial(url, 30000);
     if (!body || body.ok !== true) throw new Error("UNAUTHORIZED");
     return { links: Array.isArray(body.links) ? body.links : [] };
   }

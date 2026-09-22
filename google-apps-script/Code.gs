@@ -46,6 +46,12 @@ var DEFAULT_PASSWORD = "2121";
 var CACHE_KEY = "links_json_v1";
 var CACHE_TTL_SECONDS = 300; // 5分（万一キャッシュ更新を取りこぼしても、この時間で必ず読み直す）
 
+// スリープ防止(keepWarm)を動かす時間帯。この範囲外ではシート読み取りを省く。
+// 判定にはスクリプトのタイムゾーン設定が使われる
+// （[プロジェクトの設定]→[タイムゾーン] が Asia/Tokyo になっているか確認してください）。
+var KEEP_WARM_START_HOUR = 7;  // 7時台から
+var KEEP_WARM_END_HOUR = 20;   // 20時になったら終了
+
 function getPassword_() {
   var pw = PropertiesService.getScriptProperties().getProperty(PASSWORD_PROPERTY_KEY);
   return pw || DEFAULT_PASSWORD;
@@ -132,6 +138,57 @@ function readLinksCached_(skipCache) {
  */
 function onEdit(e) {
   clearCachedLinks_();
+}
+
+/**
+ * 【スリープ防止】5分おきの時間主導型トリガーから呼ばれる。
+ *
+ * Apps Script は一定時間どこからも呼ばれないとスリープし、
+ * 次の1回目の応答に10秒前後かかる（コールドスタート）。
+ * 定期的に空回ししておくことでこれを防ぐ。
+ * ついでにキャッシュも入れ直すので、業務時間中はキャッシュが切れることもなくなる
+ * （トリガー間隔5分 ≦ キャッシュ有効期限5分）。
+ *
+ * 【設定方法】このファイルを保存したあと、Apps Scriptエディタ上部の
+ * 関数選択メニューで setupKeepWarmTrigger を選び、「実行」を1回押すだけです。
+ * （初回は承認画面が出ます。トリガー画面での手作業は不要です）
+ */
+function keepWarm() {
+  var hour = new Date().getHours();
+  // 時間外は、起動状態の維持だけして重いシート読み取りは行わない
+  if (hour < KEEP_WARM_START_HOUR || hour >= KEEP_WARM_END_HOUR) return;
+  try {
+    putCachedLinks_(readLinks_());
+  } catch (err) {
+    clearCachedLinks_(); // 読めなかったときは古いキャッシュを残さない
+  }
+}
+
+/**
+ * keepWarm を5分おきに実行するトリガーを設定する（1回だけ手動実行すればOK）。
+ * 何度実行しても重複しないよう、既存の同じトリガーは作り直す。
+ * 停止したくなったら removeKeepWarmTrigger を実行してください。
+ */
+function setupKeepWarmTrigger() {
+  removeKeepWarmTrigger();
+  ScriptApp.newTrigger("keepWarm").timeBased().everyMinutes(5).create();
+  Logger.log("スリープ防止トリガーを設定しました（5分おき / %s時〜%s時はシートも読み直し）",
+    KEEP_WARM_START_HOUR, KEEP_WARM_END_HOUR);
+}
+
+/**
+ * スリープ防止トリガーを解除する。
+ */
+function removeKeepWarmTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var removed = 0;
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "keepWarm") {
+      ScriptApp.deleteTrigger(triggers[i]);
+      removed++;
+    }
+  }
+  Logger.log("既存のスリープ防止トリガーを%s件削除しました", removed);
 }
 
 function writeLinks_(links) {
