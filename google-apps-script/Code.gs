@@ -172,8 +172,9 @@ function keepWarm() {
 function setupKeepWarmTrigger() {
   removeKeepWarmTrigger();
   ScriptApp.newTrigger("keepWarm").timeBased().everyMinutes(5).create();
-  Logger.log("スリープ防止トリガーを設定しました（5分おき / %s時〜%s時はシートも読み直し）",
-    KEEP_WARM_START_HOUR, KEEP_WARM_END_HOUR);
+  // %s に数値を渡すと "7.0" のように小数付きで出るため、文字列にしてから渡す
+  Logger.log("スリープ防止トリガーを設定しました（5分おき / " +
+    KEEP_WARM_START_HOUR + "時〜" + KEEP_WARM_END_HOUR + "時はシートも読み直し）");
 }
 
 /**
@@ -188,7 +189,7 @@ function removeKeepWarmTrigger() {
       removed++;
     }
   }
-  Logger.log("既存のスリープ防止トリガーを%s件削除しました", removed);
+  Logger.log("既存のスリープ防止トリガーを" + removed + "件削除しました");
 }
 
 function writeLinks_(links) {
